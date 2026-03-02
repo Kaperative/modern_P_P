@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Kap_ProjectForTesting/Kap_ProjectForTesting.csproj" />
+  <Project Path="Kap_TestLib/Kap_TestLib.csproj" />
+  <Project Path="Kap_Tests/Kap_Tests.csproj" />
+  <Project Path="TestRunner/TestRunner.csproj" />
+</Solution>
