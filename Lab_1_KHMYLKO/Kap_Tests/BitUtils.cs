@@ -33,7 +33,7 @@ namespace Tests
         public void Xor_EqualLength_ReturnsCorrect()
         {
             string result = BitUtils.Xor("1010", "1100");
-            Assert.IsEqual("0110", result);
+            Assert.IsEqual("0111", result);
         }
 
         [TestMethod]

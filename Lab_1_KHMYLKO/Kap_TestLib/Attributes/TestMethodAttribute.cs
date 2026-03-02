@@ -3,10 +3,10 @@
     [AttributeUsage(AttributeTargets.Method)]
     public class TestMethodAttribute : Attribute
     {
-        public int Priority { get; }
-        public TestMethodAttribute(int priority = 0)
+        public string NameOfTesting { get; }
+        public TestMethodAttribute(string NameOfTesting = "")
         {
-            Priority = priority;
+            this.NameOfTesting = NameOfTesting;
         }
     }
 }

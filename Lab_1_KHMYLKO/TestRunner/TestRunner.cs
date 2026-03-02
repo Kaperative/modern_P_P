@@ -46,18 +46,14 @@ namespace TestRunner
         {
             Console.WriteLine($"\n=== {testClass.Name} ===");
 
-            // Поиск статических методов BeforeAll и AfterAll
             var beforeAll = GetMethodByAttribute(testClass, typeof(BeforeAll), isStatic: true);
             var afterAll = GetMethodByAttribute(testClass, typeof(AfterAll), isStatic: true);
 
-            // Поиск экземплярных методов SetUp и TearDown
             var setUp = GetMethodByAttribute(testClass, typeof(TestSetUpAttribute), isStatic: false);
             var tearDown = GetMethodByAttribute(testClass, typeof(TestTearDownAttribute), isStatic: false);
 
-            // Собираем все тестовые методы (синхронные и асинхронные)
             var testMethods = GetTestMethods(testClass);
 
-            // Вызов BeforeAll
             if (beforeAll != null)
             {
                 try
@@ -68,13 +64,12 @@ namespace TestRunner
                 {
                     Console.WriteLine($"  BEFOREALL ERROR: {ex.InnerException?.Message ?? ex.Message}");
                     _errored++;
-                    return; // Если BeforeAll упал, не запускаем тесты класса?
+                    return;
                 }
             }
 
             foreach (var testMethodInfo in testMethods)
             {
-                // Проверяем наличие Data-атрибутов (параметризация)
                 var dataRows = testMethodInfo.Method.GetCustomAttributes<TestDataAttribute>().ToList();
                 if (dataRows.Any())
                 {
@@ -92,7 +87,6 @@ namespace TestRunner
                 }
             }
 
-            // Вызов AfterAll
             if (afterAll != null)
             {
                 try
@@ -113,51 +107,50 @@ namespace TestRunner
         {
             _total++;
             var instance = Activator.CreateInstance(testClass);
-            string testName = testInfo.Method.Name + dataSuffix;
-
+            string methodName = testInfo.Method.Name;
+            var testAttr = testInfo.Method.GetCustomAttribute<TestMethodAttribute>();
+            if (testAttr != null && !string.IsNullOrEmpty(testAttr.NameOfTesting))
+            {
+                methodName = testAttr.NameOfTesting+"\\\\"+testInfo.Method.Name; 
+            }
+            string testName = methodName + dataSuffix;
             try
             {
-                // SetUp
                 if (setUp != null)
                 {
                     setUp.Invoke(instance, null);
                 }
 
-                // Вызов тестового метода
                 if (testInfo.IsAsync)
-                {
-                    // Асинхронный метод возвращает Task
+                {     
                     var task = (Task)testInfo.Method.Invoke(instance, parameters);
                     await task;
                 }
                 else
                 {
-                    // Синхронный
                     testInfo.Method.Invoke(instance, parameters);
                 }
 
-                // Если дошли до сюда — тест пройден
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"  PASSED: {testName}");
                 _passed++;
             }
             catch (TargetInvocationException ex) when (ex.InnerException is AssertException)
             {
-                // Упавшая проверка (AssertionException)
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"  FAILED: {testName} - {ex.InnerException.Message}");
                 _failed++;
             }
             catch (TargetInvocationException ex)
             {
-                // Другое исключение внутри теста
+                
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine($"  ERROR: {testName} - {ex.InnerException?.Message ?? ex.Message}");
                 _errored++;
             }
             catch (Exception ex)
             {
-                // Ошибка вызова самого метода (например, неверные параметры)
+                
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine($"  ERROR: {testName} - {ex.Message}");
                 _errored++;
@@ -165,7 +158,6 @@ namespace TestRunner
             finally
             {
                 Console.ResetColor();
-                // TearDown
                 if (tearDown != null)
                 {
                     try
