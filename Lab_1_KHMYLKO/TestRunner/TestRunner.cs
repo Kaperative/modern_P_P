@@ -15,13 +15,23 @@ namespace TestRunner
   
     class Program
     {
+
         static async Task Main(string[] args)
         {
             string testAssemblyPath = "Kap_Tests.dll";
-
             var runner = new TestRunner();
 
-            await runner.RunTestsAsync("Kap_Tests.dll", maxDegree: 8);
+  
+            Console.WriteLine("Starting load simulation...");
+            await runner.SimulateLoad();
+            Console.WriteLine("Load simulation finished.\n");
+
+
+            for (int i = 1; i <= 50; i++)
+            {
+                Console.WriteLine($"\n=== Test Run {i} ===");
+                await runner.RunTestsAsync(testAssemblyPath, maxDegree: 8);
+            }
 
         }
     }
