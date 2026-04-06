@@ -7,16 +7,22 @@ namespace Kap_Tests
     [TestClass]
     public class GrayCodeConverterTests
     {
+       
         [TestMethod]
+
         public void ConvertNumber_ReturnsString()
-        {
+        {         
             var result = NumberBaseConverter.ConvertNumber("1010", 2, 16);
             Assert.IsInstanceOfType(result, typeof(string));
+            
         }
+
+
 
         [TestMethod]
         public void BinaryToGray_Simple_ReturnsCorrect()
         {
+  
             string gray = GrayCodeConverter.BinaryToGray("1011");
             Assert.IsEqual("1110", gray);
         }

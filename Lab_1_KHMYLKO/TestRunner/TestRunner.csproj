@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CustomThreadPoolModule\CustomThreadPoolModule.csproj" />
     <ProjectReference Include="..\Kap_ProjectForTesting\Kap_ProjectForTesting.csproj" />
     <ProjectReference Include="..\Kap_TestLib\Kap_TestLib.csproj" />
     <ProjectReference Include="..\Kap_Tests\Kap_Tests.csproj" />

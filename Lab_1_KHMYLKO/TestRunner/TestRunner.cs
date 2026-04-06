@@ -8,6 +8,8 @@ using Kap_TestLib.Attributes;
 using Kap_TestLib.Exceptions;
 using System.Diagnostics;
 
+using CustomThreadPoolModule;
+
 namespace TestRunner
 {
   
@@ -19,21 +21,8 @@ namespace TestRunner
 
             var runner = new TestRunner();
 
+            await runner.RunTestsAsync("Kap_Tests.dll", maxDegree: 8);
 
-            var sw = Stopwatch.StartNew();
-
-            await runner.RunTestsAsync(testAssemblyPath, maxDegree: 1);
-
-            sw.Stop();
-            Console.WriteLine($"\nSequential: {sw.ElapsedMilliseconds} ms");
-
-
-            sw.Restart();
-
-            await runner.RunTestsAsync(testAssemblyPath, maxDegree: 4);
-
-            sw.Stop();
-            Console.WriteLine($"Parallel: {sw.ElapsedMilliseconds} ms");
         }
     }
 
@@ -43,12 +32,27 @@ namespace TestRunner
         private int _passed = 0;
         private int _failed = 0;
         private int _errored = 0;
-        private SemaphoreSlim _semaphore;
+        private CustomThreadPool _threadPool;
         private readonly object _lock = new object();
 
+        private static ThreadLocal<Random> _rand = new(() => new Random());
+        private void WaitForCompletion()
+        {
+            while (true)
+            {
+                lock (_lock)
+                {
+                    if (_total == (_passed + _failed + _errored))
+                        return;
+                }
+
+                Thread.Sleep(100);
+            }
+        }
         public async Task RunTestsAsync(string assemblyPath, int maxDegree = 4)
         {
-            _semaphore = new SemaphoreSlim(maxDegree);
+            _threadPool = new CustomThreadPool(minThreads: 2, maxThreads: maxDegree);
+
             var assembly = Assembly.LoadFrom(assemblyPath);
             var testClasses = assembly.GetTypes()
                 .Where(t => t.GetCustomAttribute<TestClassAttribute>() != null);
@@ -58,7 +62,10 @@ namespace TestRunner
                 await RunClassTestsAsync(testClass);
             }
 
+            WaitForCompletion();
+
             PrintSummary();
+            _threadPool.Stop();
         }
 
         private async Task RunClassTestsAsync(Type testClass)
@@ -73,6 +80,10 @@ namespace TestRunner
 
             var testMethods = GetTestMethods(testClass);
 
+            int classTotal = 0;
+            int classCompleted = 0;
+            object classLock = new object();
+
             if (beforeAll != null)
             {
                 try
@@ -86,7 +97,7 @@ namespace TestRunner
                     return;
                 }
             }
-            var tasks = new List<Task>();
+
 
             foreach (var testMethodInfo in testMethods)
             {
@@ -95,30 +106,67 @@ namespace TestRunner
                 if (dataRows.Any())
                 {
                     int dataIndex = 0;
+
                     foreach (var dataRow in dataRows)
                     {
                         dataIndex++;
-                        string dataSuffix = $" (Data{dataIndex}: {string.Join(",", dataRow.data)})";
+                        string dataSuffix = $" (Data{dataIndex})";
+                        classTotal++;
+                        _threadPool.Enqueue(() =>
+                        {
+                            try
+                            {
+                                RunSingleTest(testClass, testMethodInfo, setUp, tearDown,
+                                              dataRow.data, dataSuffix)
+                                              .GetAwaiter().GetResult();
+                            }
+                            finally
+                            {
+                                lock (classLock)
+                                {
+                                    classCompleted++;
+                                }
+                            }
 
-                        tasks.Add(RunTestWithSemaphore(
-                            testClass, testMethodInfo, setUp, tearDown,
-                            dataRow.data, dataSuffix));
+                        });
                     }
                 }
                 else
                 {
-                    tasks.Add(RunTestWithSemaphore(
-                        testClass, testMethodInfo, setUp, tearDown,
-                        null, ""));
+                    classTotal++;
+
+                    _threadPool.Enqueue(() =>
+                    {
+                        try
+                        {
+                            RunSingleTest(testClass, testMethodInfo, setUp, tearDown,
+                                          null, "")
+                                          .GetAwaiter().GetResult();
+                        }
+                        finally
+                        {
+                            lock (classLock)
+                            {
+                                classCompleted++; 
+                            }
+                        }
+                    });
                 }
             }
 
-            await Task.WhenAll(tasks);
-
-            if (afterAll != null)
+                if (afterAll != null)
             {
                 try
                 {
+                    while (true)
+                    {
+                        lock (classLock)
+                        {
+                            if (classCompleted == classTotal)
+                                break;
+                        }
+                        Thread.Sleep(50);
+                    }
                     afterAll.Invoke(null, null);
                 }
                 catch (Exception ex)
@@ -130,129 +178,117 @@ namespace TestRunner
         }
 
 
-        private async Task RunTestWithSemaphore(
-    Type testClass,
-    (MethodInfo Method, bool IsAsync) testInfo,
-    MethodInfo setUp,
-    MethodInfo tearDown,
-    object[] parameters,
-    string dataSuffix)
+        public async Task SimulateLoad()
         {
-            await _semaphore.WaitAsync();
+            await Task.Delay(2000);
 
-            try
+            
+            for (int i = 0; i < 30; i++)
             {
-                await RunSingleTest(testClass, testInfo, setUp, tearDown, parameters, dataSuffix);
+                _threadPool.Enqueue(() =>
+                {
+                    Thread.Sleep(_rand.Value.Next(100, 500));
+                });
             }
-            finally
+
+            await Task.Delay(1000);
+
+            for (int i = 0; i < 5; i++)
             {
-                _semaphore.Release();
+                _threadPool.Enqueue(() =>
+                {
+                    Thread.Sleep(200);
+                });
             }
         }
+
         private async Task RunSingleTest(Type testClass, (MethodInfo Method, bool IsAsync) testInfo,
-                                          MethodInfo setUp, MethodInfo tearDown,
-                                          object[] parameters, string dataSuffix)
+                                   MethodInfo setUp, MethodInfo tearDown,
+                                   object[] parameters, string dataSuffix)
         {
-            lock (_lock)
-            {
-                _total++;
-            }
+            lock (_lock) { _total++; }
+
             var timeoutAttr = testInfo.Method.GetCustomAttribute<TimeoutAttribute>();
             var instance = Activator.CreateInstance(testClass);
             string methodName = testInfo.Method.Name;
-            var testAttr = testInfo.Method.GetCustomAttribute<TestMethodAttribute>();
 
-
-            if (testAttr != null && !string.IsNullOrEmpty(testAttr.NameOfTesting))
-            {
-                methodName = testAttr.NameOfTesting+"\\\\"+testInfo.Method.Name; 
-            }
             string testName = methodName + dataSuffix;
+
             try
             {
-                if (setUp != null)
-                {
-                    setUp.Invoke(instance, null);
-                }
+                if (setUp != null) setUp.Invoke(instance, null);
+
                 Task testTask;
 
                 if (testInfo.IsAsync)
                 {
-                    testTask = (Task)testInfo.Method.Invoke(instance, parameters);
-                }
-                else
-                {
-                    testTask = Task.Run(() => testInfo.Method.Invoke(instance, parameters));
-                }
+                   
+                    var cts = timeoutAttr != null
+                        ? new CancellationTokenSource(timeoutAttr.Milliseconds)
+                        : new CancellationTokenSource();
 
-                if (timeoutAttr != null)
-                {
-                    var completed = await Task.WhenAny(testTask, Task.Delay(timeoutAttr.Milliseconds));
+               
+                    var parametersWithToken = parameters ?? Array.Empty<object>();
+                    if (testInfo.Method.GetParameters().Any(p => p.ParameterType == typeof(CancellationToken)))
+                    {
+                        parametersWithToken = parametersWithToken.Append(cts.Token).ToArray();
+                    }
+
+                    testTask = (Task)testInfo.Method.Invoke(instance, parametersWithToken);
+                    var completed = await Task.WhenAny(testTask, Task.Delay(Timeout.Infinite, cts.Token));
 
                     if (completed != testTask)
-                    {
                         throw new Exception("Test timeout exceeded");
-                    }
+
+                    await testTask;
                 }
                 else
                 {
-                    await testTask;
+            
+                    testInfo.Method.Invoke(instance, parameters);
+                   
                 }
 
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"  PASSED: {testName}");
-                lock(_lock)
-                { 
+                lock (_lock)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"  PASSED: {testName}");
+                    Console.ResetColor();
                     _passed++;
                 }
-                
             }
             catch (TargetInvocationException ex) when (ex.InnerException is AssertException)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"  FAILED: {testName} - {ex.InnerException.Message}");
                 lock (_lock)
                 {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"  FAILED: {testName} - {ex.InnerException.Message}");
+                    Console.ResetColor();
                     _failed++;
                 }
-                
-            }
-            catch (TargetInvocationException ex)
-            {
-                
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"  ERROR: {testName} - {ex.InnerException?.Message ?? ex.Message}");
-                lock (_lock)
-                {
-                    _errored++;
-                }
-               
             }
             catch (Exception ex)
             {
-                
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"  ERROR: {testName} - {ex.Message}");
                 lock (_lock)
                 {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"  ERROR: {testName} - {ex.Message}");
+                    Console.ResetColor();
                     _errored++;
                 }
             }
             finally
             {
-                Console.ResetColor();
                 if (tearDown != null)
                 {
-                    try
-                    {
-                        tearDown.Invoke(instance, null);
-                    }
+                    try { tearDown.Invoke(instance, null); }
                     catch (Exception ex)
                     {
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine($"  TEARDOWN ERROR: {testName} - {ex.Message}");
                         lock (_lock)
                         {
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine($"  TEARDOWN ERROR: {testName} - {ex.Message}");
+                            Console.ResetColor();
                             _errored++;
                         }
                     }

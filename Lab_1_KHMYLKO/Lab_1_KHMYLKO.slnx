@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="CustomThreadPoolModule/CustomThreadPoolModule.csproj" Id="ba770508-7ee4-49e2-ad26-c68a97fca373" />
   <Project Path="Kap_ProjectForTesting/Kap_ProjectForTesting.csproj" />
   <Project Path="Kap_TestLib/Kap_TestLib.csproj" />
   <Project Path="Kap_Tests/Kap_Tests.csproj" />

@@ -14,8 +14,14 @@ namespace Tests
         public void Setup() => _facade = new CodeConverterFacade();
 
         [AsyncTestMethod]
-        public async Task ConvertBaseAsync_ReturnsCorrect()
+        [Timeout(10)]
+        public async Task ConvertBaseAsync_ReturnsCorrect(CancellationToken ct)
         {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(200);
+            }
+            ct.ThrowIfCancellationRequested();
             string result = await _facade.ConvertBaseAsync("FF", 16, 10);
             Assert.IsEqual("255", result);
         }
